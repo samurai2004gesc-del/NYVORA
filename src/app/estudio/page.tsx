@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Calculator, Download, Gem, KeyRound, Loader2, PencilRuler, Save, Sparkles } from "lucide-react";
+import { Calculator, Download, Gem, KeyRound, Loader2, PencilRuler, Save, Sparkles, ThumbsDown, ThumbsUp } from "lucide-react";
 import { Boceto, type ManejadorBoceto } from "@/components/Boceto";
 import { MarcaNyvora } from "@/components/Logo";
 import { ESTILOS, METALES, PIEDRAS, TALLAS, TIPOS_PIEZA, nombrePorId, metalPorId } from "@/lib/materiales";
@@ -19,20 +19,27 @@ interface Resultado {
   piezaId?: string;
   /** Modelo y resolución que hicieron el render, p. ej. «Nano Banana Pro · 2048 px». */
   motor?: string;
+  proveedor?: string;
+  modelo?: string;
+  /** Valoración ya enviada al dataset de entrenamiento. */
+  valoracion?: "buena" | "mala";
 }
 
-type Proveedor = "openai" | "gemini";
+type Proveedor = "openai" | "gemini" | "nyvora";
 type Calidad = "maxima" | "estandar";
 
 interface EstadoIA {
   proveedor: Proveedor | null;
   proveedores: Proveedor[];
   requiereCodigo: boolean;
+  /** Hay un Blob store conectado: se pueden guardar pares para entrenar el motor propio. */
+  dataset: boolean;
 }
 
 const MOTORES: { id: Proveedor; nombre: string }[] = [
   { id: "gemini", nombre: "Google Nano Banana Pro" },
   { id: "openai", nombre: "OpenAI GPT Image 2" },
+  { id: "nyvora", nombre: "Motor NYVORA (propio)" },
 ];
 const CALIDADES: { id: Calidad; nombre: string }[] = [
   { id: "maxima", nombre: "Máxima · 2K (más lento)" },
@@ -49,6 +56,7 @@ const NOMBRES_MODELO: Record<string, string> = {
 
 const MENSAJES = ["Puliendo el metal…", "Engastando las piedras…", "Ajustando la luz de estudio…", "Tallando las facetas…", "Últimos destellos…"];
 const CLAVE_CODIGO = "nyvora:codigo";
+const CLAVE_CONSENTIMIENTO = "nyvora:consentimiento";
 
 function Selector({ etiqueta, valor, opciones, onChange }: { etiqueta: string; valor: string; opciones: { id: string; nombre: string }[]; onChange: (v: string) => void }) {
   return (
@@ -83,6 +91,8 @@ export default function Estudio() {
   const [activo, setActivo] = useState(0);
   const [vista, setVista] = useState<"render" | "tecnico" | "boceto">("render");
   const [aviso, setAviso] = useState<{ texto: string; enlace?: string } | null>(null);
+  const [consentimiento, setConsentimiento] = useState(false);
+  const [valorando, setValorando] = useState(false);
 
   const alCambiar = useCallback((v: boolean) => setVacio(v), []);
   const actual = resultados[activo];
@@ -94,9 +104,10 @@ export default function Estudio() {
         setEstadoIA({ ...e, proveedores: e.proveedores ?? [] });
         setMotor(e.proveedor);
       })
-      .catch(() => setEstadoIA({ proveedor: null, proveedores: [], requiereCodigo: false }));
+      .catch(() => setEstadoIA({ proveedor: null, proveedores: [], requiereCodigo: false, dataset: false }));
     try {
       setCodigo(localStorage.getItem(CLAVE_CODIGO) ?? "");
+      setConsentimiento(localStorage.getItem(CLAVE_CONSENTIMIENTO) === "si");
       const dePortada = sessionStorage.getItem(CLAVE_BOCETO_PORTADA);
       if (dePortada) {
         boceto.current?.cargar(dePortada);
@@ -122,7 +133,7 @@ export default function Estudio() {
 
   const cambiar = <K extends keyof EspecDiseno>(k: K, v: EspecDiseno[K]) => setEspec((e) => ({ ...e, [k]: v }));
 
-  async function llamarIA(modo: ModoRender, imagen: string, e: EspecDiseno): Promise<{ imagen: string; motor: string } | null> {
+  async function llamarIA(modo: ModoRender, imagen: string, e: EspecDiseno): Promise<{ imagen: string; motor: string; proveedor: string; modelo: string } | null> {
     setError(null);
     setGenerando(modo);
     try {
@@ -139,7 +150,7 @@ export default function Estudio() {
         return null;
       }
       const nombre = NOMBRES_MODELO[j.modelo] ?? j.modelo ?? "";
-      return { imagen: j.imagen as string, motor: j.lado ? `${nombre} · ${j.lado} px` : nombre };
+      return { imagen: j.imagen as string, motor: j.lado ? `${nombre} · ${j.lado} px` : nombre, proveedor: j.proveedor, modelo: j.modelo };
     } catch {
       setError("No se pudo conectar con el servidor. Revisa tu conexión e inténtalo de nuevo.");
       return null;
@@ -156,7 +167,15 @@ export default function Estudio() {
     }
     const salida = await llamarIA("render", imagen, espec);
     if (!salida) return;
-    const nuevo: Resultado = { id: crypto.randomUUID(), boceto: imagen, render: salida.imagen, motor: salida.motor, espec };
+    const nuevo: Resultado = {
+      id: crypto.randomUUID(),
+      boceto: imagen,
+      render: salida.imagen,
+      motor: salida.motor,
+      proveedor: salida.proveedor,
+      modelo: salida.modelo,
+      espec,
+    };
     setResultados((rs) => [nuevo, ...rs]);
     setActivo(0);
     setVista("render");
@@ -199,6 +218,42 @@ export default function Estudio() {
     } catch {
       setError("No se pudo guardar. Puede que tu navegador esté en modo privado o sin espacio.");
       return null;
+    }
+  }
+
+  function cambiarConsentimiento(si: boolean) {
+    setConsentimiento(si);
+    try {
+      localStorage.setItem(CLAVE_CONSENTIMIENTO, si ? "si" : "no");
+    } catch {}
+  }
+
+  /** Manda el par boceto → render, con su valoración, al dataset de entrenamiento del motor propio. */
+  async function valorar(valoracion: "buena" | "mala") {
+    if (!actual?.render || !consentimiento) return;
+    setValorando(true);
+    setError(null);
+    try {
+      // Tamaños pensados para el límite de 4.5 MB por petición de Vercel; para entrenar sobra.
+      const render = await comprimirImagen(actual.render, 1536, 0.92);
+      const boceto = actual.boceto.length > 1_500_000 ? await comprimirImagen(actual.boceto, 1024, 0.9) : actual.boceto;
+      const r = await fetch("/api/dataset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-nyvora-code": codigo },
+        body: JSON.stringify({ boceto, render, espec: actual.espec, valoracion, proveedor: actual.proveedor, modelo: actual.modelo, consentimiento: true }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setError(j.error ?? `Error ${r.status}`);
+        return;
+      }
+      const id = actual.id;
+      setResultados((rs) => rs.map((x) => (x.id === id ? { ...x, valoracion } : x)));
+      setAviso({ texto: valoracion === "buena" ? "Gracias: este par ayudará a entrenar el motor NYVORA." : "Anotado: también aprendemos de los que no salen bien." });
+    } catch {
+      setError("No se pudo enviar la valoración.");
+    } finally {
+      setValorando(false);
     }
   }
 
@@ -355,6 +410,36 @@ export default function Estudio() {
                     </button>
                   )}
                 </div>
+                {estadoIA?.dataset && actual.render && (
+                  <div className="rounded-xl border border-linea bg-marfil/60 p-3.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-medium">{actual.valoracion ? "¡Gracias por tu valoración!" : "¿Cómo quedó este render?"}</p>
+                      <div className="flex gap-2">
+                        {(["buena", "mala"] as const).map((v) => (
+                          <button
+                            key={v}
+                            type="button"
+                            onClick={() => valorar(v)}
+                            disabled={!consentimiento || valorando || !!generando || !!actual.valoracion}
+                            aria-pressed={actual.valoracion === v}
+                            className={`btn btn-chico ${actual.valoracion === v ? "btn-primario disabled:opacity-100" : "btn-secundario"}`}
+                          >
+                            {v === "buena" ? <ThumbsUp size={15} /> : <ThumbsDown size={15} />} {v === "buena" ? "Buena" : "Mala"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <label className="mt-2.5 flex items-start gap-2 text-xs leading-relaxed text-tinta-2">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 accent-[#121829]"
+                        checked={consentimiento}
+                        onChange={(e) => cambiarConsentimiento(e.target.checked)}
+                      />
+                      Permito que NYVORA guarde los bocetos y renders que valore para entrenar su propio motor de IA.
+                    </label>
+                  </div>
+                )}
                 {resultados.length > 1 && (
                   <div>
                     <p className="etiqueta mb-2">Versiones de esta sesión</p>

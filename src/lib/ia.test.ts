@@ -2,7 +2,7 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
 import { generarImagen, proveedorConfigurado, proveedoresDisponibles } from "./ia.ts";
-import { construirPrompt, ESPEC_INICIAL } from "./prompts.ts";
+import { construirInstruccion, construirPrompt, ESPEC_INICIAL } from "./prompts.ts";
 
 const BOCETO = { mime: "image/png", base64: Buffer.from("boceto").toString("base64") };
 let llamadas: { url: string; init: RequestInit }[] = [];
@@ -24,7 +24,7 @@ const form = (i: number) => llamadas[i].init.body as FormData;
 const cuerpoGemini = (i: number) => JSON.parse(String(llamadas[i].init.body));
 
 beforeEach(() => {
-  for (const k of ["OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "NYVORA_IMAGE_PROVIDER", "OPENAI_IMAGE_MODEL", "GEMINI_IMAGE_MODEL"]) {
+  for (const k of ["OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "NYVORA_IMAGE_PROVIDER", "OPENAI_IMAGE_MODEL", "GEMINI_IMAGE_MODEL", "FAL_KEY", "NYVORA_MOTOR_ENDPOINT", "NYVORA_MOTOR_LORA", "NYVORA_MOTOR_ESCALA"]) {
     delete process.env[k];
   }
 });
@@ -150,4 +150,47 @@ test("los prompts incluyen los materiales, la construcción real y la fotografí
   assert.match(p, /focus-stacked/);
   assert.match(p, /floating or unsupported stones/);
   assert.match(construirPrompt("tecnico", ESPEC_INICIAL), /orthographic views/);
+});
+
+test("motor propio: aparece solo con FAL_KEY y endpoint, y no es el de por defecto si hay otros", () => {
+  process.env.FAL_KEY = "fal";
+  assert.deepEqual(proveedoresDisponibles(), []);
+  process.env.NYVORA_MOTOR_ENDPOINT = "fal-ai/modelo/edit/lora";
+  assert.deepEqual(proveedoresDisponibles(), ["nyvora"]);
+  process.env.GEMINI_API_KEY = "g";
+  assert.deepEqual(proveedoresDisponibles(), ["gemini", "nyvora"]);
+  assert.equal(proveedorConfigurado(), "gemini");
+});
+
+test("motor propio: manda boceto, instrucción y LoRA a fal.ai y descarga la imagen", async () => {
+  process.env.FAL_KEY = "fal-prueba";
+  process.env.NYVORA_MOTOR_ENDPOINT = "/fal-ai/modelo/edit/lora/";
+  process.env.NYVORA_MOTOR_LORA = "https://v3.fal.media/files/nyvora.safetensors";
+  const png = Buffer.from(await pngDePrueba(1024), "base64");
+  llamadas = [];
+  globalThis.fetch = (async (url: string, init: RequestInit) => {
+    llamadas.push({ url, init });
+    if (url.startsWith("https://fal.run/")) {
+      return Response.json({ images: [{ url: "https://v3.fal.media/files/render.png" }] });
+    }
+    return new Response(png, { headers: { "Content-Type": "image/png" } });
+  }) as typeof fetch;
+
+  const instruccion = construirInstruccion(ESPEC_INICIAL);
+  const salida = await generarImagen("nyvora", instruccion, BOCETO);
+  assert.equal(llamadas[0].url, "https://fal.run/fal-ai/modelo/edit/lora");
+  assert.equal((llamadas[0].init.headers as Record<string, string>).Authorization, "Key fal-prueba");
+  const cuerpo = JSON.parse(String(llamadas[0].init.body));
+  assert.equal(cuerpo.prompt, instruccion);
+  assert.equal(cuerpo.image_url, `data:image/png;base64,${BOCETO.base64}`);
+  assert.deepEqual(cuerpo.loras, [{ path: "https://v3.fal.media/files/nyvora.safetensors", scale: 1 }]);
+  assert.equal(llamadas[1].url, "https://v3.fal.media/files/render.png");
+  assert.match(salida.dataUrl, /^data:image\/jpeg;base64,/);
+  assert.equal(salida.proveedor, "nyvora");
+});
+
+test("la instrucción corta describe la pieza y siempre empieza igual", () => {
+  const i = construirInstruccion({ ...ESPEC_INICIAL, metalId: "au18r" });
+  assert.match(i, /^Turn this jewelry sketch into a photorealistic studio product photo/);
+  assert.match(i, /rose gold/);
 });

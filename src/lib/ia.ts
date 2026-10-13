@@ -2,7 +2,7 @@
 
 import sharp from "sharp";
 
-export type Proveedor = "openai" | "gemini";
+export type Proveedor = "openai" | "gemini" | "nyvora";
 export type Calidad = "estandar" | "maxima";
 
 export interface ImagenEntrada {
@@ -37,10 +37,14 @@ const MODELOS_GEMINI = ["gemini-3-pro-image", "gemini-3.1-flash-image", "gemini-
 
 const claveGemini = () => process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || "";
 
+/** El motor propio: un modelo abierto con el LoRA de NYVORA, servido en fal.ai. */
+const motorPropioListo = () => Boolean(process.env.FAL_KEY && process.env.NYVORA_MOTOR_ENDPOINT);
+
 export function proveedoresDisponibles(): Proveedor[] {
   const lista: Proveedor[] = [];
   if (claveGemini()) lista.push("gemini");
   if (process.env.OPENAI_API_KEY) lista.push("openai");
+  if (motorPropioListo()) lista.push("nyvora");
   return lista;
 }
 
@@ -58,6 +62,8 @@ const candidatos = (variable: string, lista: string[]) => {
 };
 
 export async function generarImagen(proveedor: Proveedor, prompt: string, img: ImagenEntrada, calidad: Calidad = "maxima"): Promise<ImagenSalida> {
+  if (proveedor === "nyvora") return conMotorPropio(prompt, img);
+
   // Cada modelo se intenta con la mejor resolución y, si no la acepta, con la siguiente.
   const intentos =
     proveedor === "openai"
@@ -183,4 +189,41 @@ async function conGemini(modelo: string, tam: string | null, prompt: string, img
   }
   const motivo = j?.candidates?.[0]?.finishReason ?? j?.promptFeedback?.blockReason;
   throw new ErrorIA(`Gemini no devolvió ninguna imagen${motivo ? ` (${motivo})` : ""}.`);
+}
+
+/**
+ * Motor propio en fal.ai. Se configura con FAL_KEY, NYVORA_MOTOR_ENDPOINT (el endpoint de edición
+ * con LoRA del modelo base que se entrenó) y NYVORA_MOTOR_LORA (la URL de los pesos entrenados).
+ * Se mandan los nombres de campo más comunes de fal; cada endpoint ignora los que no usa.
+ */
+async function conMotorPropio(prompt: string, img: ImagenEntrada): Promise<ImagenSalida> {
+  const endpoint = (process.env.NYVORA_MOTOR_ENDPOINT ?? "").replace(/^\/+|\/+$/g, "");
+  const boceto = `data:${img.mime};base64,${img.base64}`;
+  const lora = process.env.NYVORA_MOTOR_LORA;
+  const r = await fetch(`https://fal.run/${endpoint}`, {
+    method: "POST",
+    headers: { Authorization: `Key ${process.env.FAL_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt,
+      image_url: boceto,
+      image_urls: [boceto],
+      ...(lora ? { loras: [{ path: lora, scale: Number(process.env.NYVORA_MOTOR_ESCALA ?? 1) }] } : {}),
+      num_images: 1,
+      output_format: "png",
+    }),
+  });
+  if (!r.ok) throw new ErrorIA(`Motor NYVORA: ${await leerError(r)}`, r.status === 429 ? 429 : 502);
+  const j = await r.json();
+  const url: string | undefined = j?.images?.[0]?.url ?? j?.image?.url;
+  if (!url) throw new ErrorIA("El motor NYVORA no devolvió ninguna imagen.");
+
+  if (url.startsWith("data:")) {
+    const [cabecera, datos] = url.split(",", 2);
+    return { ...(await aJpeg(datos, cabecera.slice(5).split(";")[0])), proveedor: "nyvora", modelo: endpoint };
+  }
+  if (!url.startsWith("https://")) throw new ErrorIA("El motor NYVORA devolvió una dirección de imagen no válida.");
+  const descarga = await fetch(url);
+  if (!descarga.ok) throw new ErrorIA("No se pudo descargar la imagen del motor NYVORA.");
+  const base64 = Buffer.from(await descarga.arrayBuffer()).toString("base64");
+  return { ...(await aJpeg(base64, descarga.headers.get("content-type") ?? "image/png")), proveedor: "nyvora", modelo: endpoint };
 }

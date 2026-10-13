@@ -30,7 +30,7 @@ const PREGUNTAS = [
   },
   {
     p: "¿Dónde se guardan mis diseños?",
-    r: "En esta primera versión, en tu propio navegador. Nada se sube a otro servidor salvo el boceto que envías a la IA para generar el render. Las cuentas con nube compartida llegan en la siguiente fase.",
+    r: "Tu colección vive en tu propio navegador. Al servidor solo viaja el boceto que envías a la IA para generar el render. Y únicamente si marcas la casilla de permiso y valoras un render, ese boceto y su render se guardan de forma privada para entrenar el motor propio de NYVORA.",
   },
   {
     p: "¿Qué inteligencia artificial usa?",

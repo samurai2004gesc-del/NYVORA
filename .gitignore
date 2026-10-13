@@ -6,3 +6,6 @@ out/
 next-env.d.ts
 .env*.local
 .env
+
+# Exportaciones del dataset de entrenamiento
+nyvora-dataset-*

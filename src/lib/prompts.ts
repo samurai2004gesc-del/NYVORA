@@ -38,6 +38,14 @@ export function describirPieza(e: EspecDiseno): string {
   return partes.join(" ");
 }
 
+/**
+ * Instrucción corta y siempre igual de forma. Es el pie de foto de cada par en el entrenamiento
+ * y lo que recibe el motor propio: así el modelo aprende exactamente este «idioma».
+ */
+export function construirInstruccion(e: EspecDiseno): string {
+  return `Turn this jewelry sketch into a photorealistic studio product photo of the finished piece. ${describirPieza(e)}`;
+}
+
 export function construirPrompt(modo: ModoRender, e: EspecDiseno): string {
   if (modo === "tecnico") {
     return [

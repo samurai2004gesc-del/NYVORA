@@ -65,6 +65,50 @@ Notas:
 - Si cambian los nombres de los modelos, ajústalos sin tocar código con `OPENAI_IMAGE_MODEL` o
   `GEMINI_IMAGE_MODEL`.
 
+## Motor propio NYVORA
+
+El objetivo es tener un modelo de render propio: un modelo abierto con licencia comercial, especializado
+con un LoRA entrenado con pares **boceto → foto** de NYVORA. El camino ya está preparado de punta a punta.
+
+### 1. Juntar datos (desde ya)
+
+1. En Vercel: **Storage → Create → Blob**, elige acceso **Private** (no se puede cambiar después) y
+   conéctalo al proyecto. Vercel añade solo las credenciales.
+2. Agrega `NYVORA_ADMIN_CODE` y vuelve a desplegar.
+3. En el estudio, bajo cada render aparece **«¿Cómo quedó este render?» 👍 / 👎** con una casilla de
+   permiso. Solo con la casilla marcada se guarda el par (boceto, render, ficha de la pieza y la
+   instrucción con la que se entrenará) en el Blob privado.
+4. En **`/datos`** (con el código de administración) ves cuántas muestras buenas hay, el avance hacia
+   la meta de 500 y las últimas recibidas, y puedes borrar las que no deban entrar al entrenamiento.
+
+### 2. Exportar
+
+Requiere Node.js 22 o superior, en la carpeta del proyecto:
+
+```bash
+npx vercel link
+npx vercel env pull .env.local
+npm run dataset:exportar
+```
+
+Sale `nyvora-dataset-AAAA-MM-DD.zip` con los pares en el formato de los entrenadores de edición de
+fal.ai (`0001_start.png` boceto, `0001_end.png` render, `0001.txt` instrucción) y un `.jsonl` con los
+metadatos.
+
+### 3. Entrenar
+
+En [fal.ai](https://fal.ai), abre un entrenador de **edición** (pares *start/end*) de un modelo base con
+**licencia comercial** (por ejemplo FLUX.2 [klein] 4B, Apache 2.0; confirma la licencia en su ficha antes
+de entrenar), sube el zip y entrena. Cada intento cuesta unos pocos dólares. El entrenador devuelve la URL
+de los pesos (`.safetensors`).
+
+### 4. Conectar
+
+Agrega `FAL_KEY`, `NYVORA_MOTOR_ENDPOINT` (el endpoint de edición con LoRA del mismo modelo base) y
+`NYVORA_MOTOR_LORA` (la URL de los pesos), y vuelve a desplegar. En el estudio aparece **«Motor NYVORA
+(propio)»** en el selector de motor para compararlo con Nano Banana Pro. El motor propio recibe la misma
+instrucción corta con la que se entrenó; el plano técnico lo siguen haciendo Gemini u OpenAI.
+
 ## Trabajar en local
 
 Requiere Node.js 20.9 o superior.
@@ -83,6 +127,7 @@ npm run dev                  # http://localhost:3000
 | `npm run build` | Build de producción (lo mismo que hace Vercel) |
 | `npm test` | Pruebas del cotizador, de los prompts y de la conexión con Gemini/OpenAI |
 | `npm run typecheck` | Revisión de tipos de TypeScript |
+| `npm run dataset:exportar` | Arma el zip de entrenamiento del motor propio (ver arriba) |
 
 ## Cómo está hecho
 
@@ -95,13 +140,16 @@ npm run dev                  # http://localhost:3000
 - `src/lib/ia.ts` y `src/app/api/render/route.ts`: la llamada a Gemini u OpenAI, la cadena de modelos de
   respaldo, la conversión a JPEG, la validación de la imagen y el código de acceso.
 - `src/lib/coleccion.ts`: la colección en IndexedDB y la compresión de imágenes.
+- `src/lib/dataset.ts`, `src/app/api/dataset/` y `src/app/datos/`: los datos de entrenamiento en Blob
+  privado y su panel. `src/lib/exportar.ts` y `scripts/exportar-dataset.mts`: el zip para entrenar.
 
 ## Hoja de ruta
 
-1. **Cuentas y nube**: inicio de sesión (Clerk o Supabase Auth), base de datos (Neon o Supabase) y
+1. **Motor propio**: juntar ~500 pares buenos, entrenar el LoRA y compararlo en el estudio (ver arriba).
+2. **Cuentas y nube**: inicio de sesión (Clerk o Supabase Auth), base de datos (Neon o Supabase) y
    Vercel Blob para las imágenes → colección en cualquier dispositivo y propuestas con enlace para el cliente.
-2. **Precio spot automático** desde una API de metales, y límite de renders por usuario.
-3. **Concierge**: chat experto en joyería para pensar diseños y responder a clientes.
-4. **Buscador de piedras** conectado a inventarios de proveedores, con botón «Solicitar».
-5. **Planes y pagos** (Stripe), equipos y propuestas con el logo de cada joyería.
-6. Del render al **modelo 3D** como punto de partida para CAD.
+3. **Precio spot automático** desde una API de metales, y límite de renders por usuario.
+4. **Concierge**: chat experto en joyería para pensar diseños y responder a clientes.
+5. **Buscador de piedras** conectado a inventarios de proveedores, con botón «Solicitar».
+6. **Planes y pagos** (Stripe), equipos y propuestas con el logo de cada joyería.
+7. Del render al **modelo 3D** como punto de partida para CAD.
