@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#E3C88E"/><stop offset=".55" stop-color="#B08D4C"/><stop offset="1" stop-color="#7E5F27"/></linearGradient></defs>
+<rect width="32" height="32" rx="7" fill="#121829"/>
+<g transform="translate(3.2 3.2) scale(.8)">
+<polygon points="21.36,3.07 28.93,10.64 28.93,21.36 21.36,28.93 10.64,28.93 3.07,21.36 3.07,10.64 10.64,3.07" stroke="url(#g)" stroke-width="1.8" stroke-linejoin="round"/>
+<polygon points="20.95,11.05 23,16 20.95,20.95 16,23 11.05,20.95 9,16 11.05,11.05 16,9" stroke="url(#g)" stroke-width="1.4" stroke-linejoin="round"/>
+<path d="M21.36,3.07L20.95,11.05L28.93,10.64M28.93,10.64L23,16L28.93,21.36M28.93,21.36L20.95,20.95L21.36,28.93M21.36,28.93L16,23L10.64,28.93M10.64,28.93L11.05,20.95L3.07,21.36M3.07,21.36L9,16L3.07,10.64M3.07,10.64L11.05,11.05L10.64,3.07M10.64,3.07L16,9L21.36,3.07" stroke="url(#g)" stroke-width="1" stroke-linejoin="round"/>
+</g></svg>
