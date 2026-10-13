@@ -194,3 +194,42 @@ test("la instrucción corta describe la pieza y siempre empieza igual", () => {
   assert.match(i, /^Turn this jewelry sketch into a photorealistic studio product photo/);
   assert.match(i, /rose gold/);
 });
+
+test("Gemini: si el plan gratuito no incluye el modelo, baja al siguiente y avisa claro", async () => {
+  process.env.GEMINI_API_KEY = "g-prueba";
+  const sinPlan = (m: string) => ({
+    cuerpo: { error: { message: `You exceeded your current quota. * Quota exceeded for metric: generate_content_free_tier_requests, limit: 0, model: ${m}` } },
+    status: 429,
+  });
+  simularFetch(sinPlan("gemini-3-pro-image"), sinPlan("gemini-3.1-flash-image"), sinPlan("gemini-2.5-flash-image"));
+  await assert.rejects(generarImagen("gemini", "prompt", BOCETO, "maxima"), (e: Error & { status?: number }) => {
+    assert.match(e.message, /plan gratuito, que no incluye gemini-3-pro-image/);
+    assert.match(e.message, /Set up billing/);
+    assert.equal(e.status, 402);
+    return true;
+  });
+  // Un intento por modelo: con «limit: 0» no tiene sentido reintentar otro tamaño del mismo.
+  assert.deepEqual(llamadas.map((l) => l.url.match(/models\/([^:]+)/)![1]), ["gemini-3-pro-image", "gemini-3.1-flash-image", "gemini-2.5-flash-image"]);
+});
+
+test("Gemini: si el siguiente modelo sí entra en el plan, genera con él", async () => {
+  process.env.GEMINI_API_KEY = "g-prueba";
+  simularFetch(
+    { cuerpo: { error: { message: "Quota exceeded for metric: generate_content_free_tier_requests, limit: 0, model: gemini-3-pro-image" } }, status: 429 },
+    { cuerpo: { candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: await pngDePrueba(64) } }] } }] } },
+  );
+  const salida = await generarImagen("gemini", "prompt", BOCETO, "maxima");
+  assert.equal(salida.modelo, "gemini-3.1-flash-image");
+});
+
+test("cuotas: sin saldo o con demasiadas peticiones se explica sin reintentar", async () => {
+  process.env.OPENAI_API_KEY = "sk-prueba";
+  simularFetch({ cuerpo: { error: { message: "You exceeded your current quota", code: "insufficient_quota" } }, status: 429 });
+  await assert.rejects(generarImagen("openai", "prompt", BOCETO), /OpenAI no tiene saldo/);
+  assert.equal(llamadas.length, 1);
+
+  process.env.GEMINI_API_KEY = "g-prueba";
+  simularFetch({ cuerpo: { error: { message: "Resource has been exhausted (e.g. check quota). Please retry in 95.2s." } }, status: 429 });
+  await assert.rejects(generarImagen("gemini", "prompt", BOCETO), /Vuelve a intentarlo en unos 2 min/);
+  assert.equal(llamadas.length, 1);
+});

@@ -108,6 +108,33 @@ function clasificar(status: number, mensaje: string): Recuperable {
 }
 
 /**
+ * Un 429 puede ser tres cosas distintas, y cada una pide algo distinto al usuario:
+ * - «limit: 0» en Google: el plan de la clave (gratuito) no incluye ese modelo → probar el siguiente.
+ * - Sin saldo («insufficient_quota», «billing»): hay que pagar; otro modelo no lo arregla.
+ * - Demasiadas peticiones seguidas: esperar un poco.
+ */
+function errorDeCuota(proveedor: "openai" | "gemini", modelo: string, mensaje: string): ErrorIA {
+  if (proveedor === "gemini" && /limit:\s*0\b|free_tier/i.test(mensaje)) {
+    return new ErrorIA(
+      `Tu clave de Google está en el plan gratuito, que no incluye ${modelo}. Activa la facturación de la clave en Google AI Studio (aistudio.google.com → API keys → Set up billing) y vuelve a intentarlo.`,
+      402,
+      "modelo",
+    );
+  }
+  if (/insufficient_quota|billing|exceeded your current quota/i.test(mensaje)) {
+    return new ErrorIA(
+      proveedor === "openai"
+        ? "Tu cuenta de OpenAI no tiene saldo o llegó a su límite de gasto. Revísalo en platform.openai.com → Billing."
+        : "Tu clave de Google llegó al límite de su plan. Revisa la facturación en Google AI Studio.",
+      402,
+    );
+  }
+  const espera = mensaje.match(/retry in (\d+(?:\.\d+)?)s/i);
+  const cuando = espera ? `en unos ${Math.max(1, Math.ceil(Number(espera[1]) / 60))} min` : "en un momento";
+  return new ErrorIA(`Demasiadas solicitudes seguidas a la IA. Vuelve a intentarlo ${cuando}.`, 429);
+}
+
+/**
  * Pasa la imagen a JPEG de alta calidad. Una PNG de 2K pesa varios MB y Vercel corta las
  * respuestas de más de 4.5 MB; en JPEG al 92 % el detalle se conserva y ocupa una fracción.
  */
@@ -141,7 +168,8 @@ async function conOpenAI(modelo: string, lado: number, calidad: Calidad, prompt:
   });
   if (!r.ok) {
     const mensaje = await leerError(r);
-    throw new ErrorIA(`OpenAI (${modelo}): ${mensaje}`, r.status === 429 ? 429 : 502, clasificar(r.status, mensaje));
+    if (r.status === 429) throw errorDeCuota("openai", modelo, mensaje);
+    throw new ErrorIA(`OpenAI (${modelo}): ${mensaje}`, 502, clasificar(r.status, mensaje));
   }
   const j = await r.json();
   const b64: string | undefined = j?.data?.[0]?.b64_json;
@@ -174,7 +202,8 @@ async function conGemini(modelo: string, tam: string | null, prompt: string, img
   });
   if (!r.ok) {
     const mensaje = await leerError(r);
-    throw new ErrorIA(`Gemini (${modelo}): ${mensaje}`, r.status === 429 ? 429 : 502, clasificar(r.status, mensaje));
+    if (r.status === 429) throw errorDeCuota("gemini", modelo, mensaje);
+    throw new ErrorIA(`Gemini (${modelo}): ${mensaje}`, 502, clasificar(r.status, mensaje));
   }
   const j = await r.json();
   const partes: ParteGemini[] = j?.candidates?.[0]?.content?.parts ?? [];
