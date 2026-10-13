@@ -53,16 +53,31 @@ export function construirPrompt(modo: ModoRender, e: EspecDiseno): string {
   const leyenda = COLORES_LAPIZ.filter((c) => c.id !== "tinta")
     .map((c) => `${c.nombre.split(" /")[0].toLowerCase()} strokes (${c.hex}) = ${c.prompt}`)
     .join("; ");
+  // Escrito como el encargo a un fotógrafo de alta joyería: lo que más sube el realismo es
+  // pedir construcción real (garras, engastes) y óptica real (lente macro, apilado de foco).
   return [
-    "Turn this hand-drawn jewelry sketch into a photorealistic, high-end studio product photograph of the finished piece.",
-    describirPieza(e),
-    "Follow the sketch closely: keep the same silhouette, proportions, viewing angle and the placement of every element.",
-    "Interpret rough lines as precise, manufacturable goldsmith work.",
-    `Stroke colors indicate materials: ${leyenda}; dark ink strokes are outlines only.`,
-    "Photography: a single piece centered, seamless very light grey background, soft diffused light,",
-    "realistic metal reflections, crisp gemstone facets with natural fire, macro lens, gentle shadow.",
-    "No hands, no text, no watermark, no props.",
-  ].join(" ");
+    "Transform the attached hand sketch into a single photorealistic studio photograph of the finished, handcrafted piece,",
+    "indistinguishable from a real photo in a luxury maison's catalog.",
+    "",
+    `DESIGN. ${describirPieza(e)}`,
+    "Keep the exact silhouette, proportions, viewing angle and composition of the sketch, and the placement of every element.",
+    "Do not invent new design elements; only add the real construction a master goldsmith would need to make it:",
+    "prongs, bezels, galleries, under-bezels, shanks with consistent thickness, clean solder joins.",
+    `The sketch's stroke colors mark materials: ${leyenda}; dark ink strokes are outlines only, never render them as lines.`,
+    "",
+    "CRAFTSMANSHIP. Mirror-polished metal with crisp, realistic reflections of a softbox studio and true metal color.",
+    "Textures (hammered, brushed, engraved, milgrain, filigree) only where the design calls for them, rendered in macro detail.",
+    "Gemstones with physically accurate optics: razor-sharp facet edges, brilliance, fire and scintillation in diamonds,",
+    "deep saturated color with natural inner life in colored stones. Every stone securely held; pavé as individually set",
+    "tiny stones with visible beads or micro-prongs.",
+    "",
+    "PHOTOGRAPHY. 100 mm macro lens, focus-stacked so the whole piece is tack-sharp, high resolution, true-to-life color.",
+    "Seamless white-to-light-grey background, large soft key light with white bounce cards, subtle natural contact shadow.",
+    "One piece, centered, filling about 70% of the frame.",
+    "",
+    "AVOID. CGI or 3D-render look, plastic or cartoon look, blurry or smeared details, floating or unsupported stones,",
+    "warped or melted metal, duplicated pieces, hands, models, text, logos, watermarks, props, leftover sketch lines.",
+  ].join("\n");
 }
 
 export function esEspecValida(x: unknown): x is EspecDiseno {

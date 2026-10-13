@@ -17,9 +17,24 @@ con identidad, textos y código propios, y en español.
 | Colección | `/coleccion` | Todas tus piezas guardadas, con imagen y precio. |
 | Propuesta | `/propuesta/[id]` | Página para el cliente: imágenes, ficha, nota editable, inversión con desglose opcional (el margen se reparte entre partidas). «Imprimir / PDF». |
 
-La IA de imágenes funciona con **OpenAI** (`gpt-image-1`) o **Google Gemini** (`gemini-2.5-flash-image`).
-Las claves viven solo en el servidor de Vercel. Sin claves, el estudio entra en **modo demostración**:
-se puede dibujar, guardar bocetos y usar el cotizador, pero no se generan renders.
+### La IA de imágenes
+
+| Motor | Modelo | Variable |
+| --- | --- | --- |
+| Google **Nano Banana Pro** | `gemini-3-pro-image` | `GEMINI_API_KEY` |
+| OpenAI **GPT Image 2** | `gpt-image-2` | `OPENAI_API_KEY` |
+
+- Son los dos modelos más fuertes en fotorrealismo a octubre de 2026. Con las dos claves, el estudio deja
+  elegir el motor (por defecto Nano Banana Pro, el más fiel en realismo) para comparar resultados.
+- **Calidad máxima (2K)** por defecto: 2048 × 2048 px, calidad alta. También hay una opción rápida a 1K.
+- Si la cuenta no tiene acceso a un modelo, NYVORA baja solo al siguiente (Nano Banana 2 → Nano Banana,
+  o GPT Image 1.5 → GPT Image 1). Bajo la imagen se ve qué modelo y resolución la generaron.
+- El servidor convierte cada render a JPEG al 92 % para que quepa en el límite de 4.5 MB de Vercel sin
+  perder detalle.
+- Las instrucciones para la IA (`src/lib/prompts.ts`) piden construcción real (garras, galerías, engastes),
+  óptica real de piedras y fotografía macro con apilado de foco, y prohíben el aspecto de render 3D.
+- Las claves viven solo en el servidor de Vercel. Sin claves, el estudio entra en **modo demostración**:
+  se puede dibujar, guardar bocetos y usar el cotizador, pero no se generan renders.
 
 > Por ahora las piezas se guardan **en el navegador** (IndexedDB). Las propuestas se comparten en PDF.
 > Cuentas, nube y enlaces compartibles están en la hoja de ruta.
@@ -30,7 +45,7 @@ se puede dibujar, guardar bocetos y usar el cotizador, pero no se generan render
 2. **Application Preset**: Next.js (Vercel lo detecta solo). Deja el **Root Directory** como está (`./`) y no
    cambies los comandos de build.
 3. En **Environment Variables** agrega (ver `.env.example`):
-   - `OPENAI_API_KEY` **o** `GEMINI_API_KEY`: con una basta.
+   - `GEMINI_API_KEY` **o** `OPENAI_API_KEY`: con una basta; con las dos puedes comparar motores.
    - `NYVORA_ACCESS_CODE`: un código que se pide en el estudio antes de generar imágenes. **Ponlo**: sin él,
      cualquiera que encuentre tu URL podría gastar tus créditos de IA.
 4. Pulsa **Deploy**.
@@ -41,9 +56,12 @@ Notas:
   reciben una URL de *preview*.
 - El plan **Hobby** de Vercel es para uso personal y no comercial. Cuando NYVORA cobre a clientes, pasa al
   plan **Pro**.
-- **OpenAI**: para usar `gpt-image-1` hay que verificar la organización en platform.openai.com.
-  **Gemini**: la clave se crea en Google AI Studio; los modelos de imagen pueden requerir facturación activa.
-  Revisa los precios por imagen de cada proveedor antes de abrirlo al público.
+- **Gemini**: la clave se crea en [Google AI Studio](https://aistudio.google.com/apikey); Nano Banana Pro
+  requiere facturación activa. **OpenAI**: para GPT Image 2 hay que verificar la organización en
+  platform.openai.com. Según fuentes de terceros, Nano Banana Pro cobra unos 0.13 USD por imagen a 2K;
+  revisa los precios actuales de cada proveedor antes de abrirlo al público.
+- Un render a 2K tarda entre 30 y 90 segundos. La función tiene un límite de 300 s, que el plan Hobby
+  admite con Fluid Compute (activado por defecto en proyectos nuevos).
 - Si cambian los nombres de los modelos, ajústalos sin tocar código con `OPENAI_IMAGE_MODEL` o
   `GEMINI_IMAGE_MODEL`.
 
@@ -63,7 +81,7 @@ npm run dev                  # http://localhost:3000
 | --- | --- |
 | `npm run dev` | Servidor de desarrollo |
 | `npm run build` | Build de producción (lo mismo que hace Vercel) |
-| `npm test` | Pruebas del cotizador, de los prompts y de la conexión con OpenAI/Gemini |
+| `npm test` | Pruebas del cotizador, de los prompts y de la conexión con Gemini/OpenAI |
 | `npm run typecheck` | Revisión de tipos de TypeScript |
 
 ## Cómo está hecho
@@ -74,8 +92,8 @@ npm run dev                  # http://localhost:3000
 - `src/lib/materiales.ts`: metales (ley y densidad), piedras, tallas, estilos, colores del lápiz y precios
   spot de referencia (13 oct 2026: oro ≈ 4 160 USD/oz, platino ≈ 1 680, plata ≈ 60).
 - `src/lib/prompts.ts`: instrucciones para la IA (render y plano técnico).
-- `src/lib/ia.ts` y `src/app/api/render/route.ts`: la llamada a OpenAI o Gemini, validación de la imagen y
-  código de acceso.
+- `src/lib/ia.ts` y `src/app/api/render/route.ts`: la llamada a Gemini u OpenAI, la cadena de modelos de
+  respaldo, la conversión a JPEG, la validación de la imagen y el código de acceso.
 - `src/lib/coleccion.ts`: la colección en IndexedDB y la compresión de imágenes.
 
 ## Hoja de ruta

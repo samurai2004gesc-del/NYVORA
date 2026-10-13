@@ -17,12 +17,35 @@ interface Resultado {
   tecnico?: string;
   espec: EspecDiseno;
   piezaId?: string;
+  /** Modelo y resolución que hicieron el render, p. ej. «Nano Banana Pro · 2048 px». */
+  motor?: string;
 }
 
+type Proveedor = "openai" | "gemini";
+type Calidad = "maxima" | "estandar";
+
 interface EstadoIA {
-  proveedor: "openai" | "gemini" | null;
+  proveedor: Proveedor | null;
+  proveedores: Proveedor[];
   requiereCodigo: boolean;
 }
+
+const MOTORES: { id: Proveedor; nombre: string }[] = [
+  { id: "gemini", nombre: "Google Nano Banana Pro" },
+  { id: "openai", nombre: "OpenAI GPT Image 2" },
+];
+const CALIDADES: { id: Calidad; nombre: string }[] = [
+  { id: "maxima", nombre: "Máxima · 2K (más lento)" },
+  { id: "estandar", nombre: "Rápida · 1K" },
+];
+const NOMBRES_MODELO: Record<string, string> = {
+  "gemini-3-pro-image": "Nano Banana Pro",
+  "gemini-3.1-flash-image": "Nano Banana 2",
+  "gemini-2.5-flash-image": "Nano Banana",
+  "gpt-image-2": "GPT Image 2",
+  "gpt-image-1.5": "GPT Image 1.5",
+  "gpt-image-1": "GPT Image 1",
+};
 
 const MENSAJES = ["Puliendo el metal…", "Engastando las piedras…", "Ajustando la luz de estudio…", "Tallando las facetas…", "Últimos destellos…"];
 const CLAVE_CODIGO = "nyvora:codigo";
@@ -50,6 +73,8 @@ export default function Estudio() {
   const [vacio, setVacio] = useState(true);
   const [espec, setEspec] = useState<EspecDiseno>(ESPEC_INICIAL);
   const [estadoIA, setEstadoIA] = useState<EstadoIA | null>(null);
+  const [motor, setMotor] = useState<Proveedor | null>(null);
+  const [calidad, setCalidad] = useState<Calidad>("maxima");
   const [codigo, setCodigo] = useState("");
   const [generando, setGenerando] = useState<ModoRender | null>(null);
   const [segundos, setSegundos] = useState(0);
@@ -65,8 +90,11 @@ export default function Estudio() {
   useEffect(() => {
     fetch("/api/render")
       .then((r) => r.json())
-      .then(setEstadoIA)
-      .catch(() => setEstadoIA({ proveedor: null, requiereCodigo: false }));
+      .then((e: EstadoIA) => {
+        setEstadoIA({ ...e, proveedores: e.proveedores ?? [] });
+        setMotor(e.proveedor);
+      })
+      .catch(() => setEstadoIA({ proveedor: null, proveedores: [], requiereCodigo: false }));
     try {
       setCodigo(localStorage.getItem(CLAVE_CODIGO) ?? "");
       const dePortada = sessionStorage.getItem(CLAVE_BOCETO_PORTADA);
@@ -94,14 +122,14 @@ export default function Estudio() {
 
   const cambiar = <K extends keyof EspecDiseno>(k: K, v: EspecDiseno[K]) => setEspec((e) => ({ ...e, [k]: v }));
 
-  async function llamarIA(modo: ModoRender, imagen: string, e: EspecDiseno): Promise<string | null> {
+  async function llamarIA(modo: ModoRender, imagen: string, e: EspecDiseno): Promise<{ imagen: string; motor: string } | null> {
     setError(null);
     setGenerando(modo);
     try {
       const r = await fetch("/api/render", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-nyvora-code": codigo },
-        body: JSON.stringify({ imagen, modo, espec: e }),
+        body: JSON.stringify({ imagen, modo, espec: e, proveedor: motor, calidad }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
@@ -110,7 +138,8 @@ export default function Estudio() {
         setError(j.error ?? `Error ${r.status}`);
         return null;
       }
-      return j.imagen as string;
+      const nombre = NOMBRES_MODELO[j.modelo] ?? j.modelo ?? "";
+      return { imagen: j.imagen as string, motor: j.lado ? `${nombre} · ${j.lado} px` : nombre };
     } catch {
       setError("No se pudo conectar con el servidor. Revisa tu conexión e inténtalo de nuevo.");
       return null;
@@ -125,9 +154,9 @@ export default function Estudio() {
       setError("Dibuja tu pieza o sube la foto de un boceto primero.");
       return;
     }
-    const render = await llamarIA("render", imagen, espec);
-    if (!render) return;
-    const nuevo: Resultado = { id: crypto.randomUUID(), boceto: imagen, render, espec };
+    const salida = await llamarIA("render", imagen, espec);
+    if (!salida) return;
+    const nuevo: Resultado = { id: crypto.randomUUID(), boceto: imagen, render: salida.imagen, motor: salida.motor, espec };
     setResultados((rs) => [nuevo, ...rs]);
     setActivo(0);
     setVista("render");
@@ -136,10 +165,10 @@ export default function Estudio() {
   async function planoTecnico() {
     if (!actual?.render) return;
     // Gemini devuelve PNG pesados; en JPEG viajan holgados dentro del límite de Vercel.
-    const tecnico = await llamarIA("tecnico", await comprimirImagen(actual.render, 1024, 0.9), actual.espec);
-    if (!tecnico) return;
+    const salida = await llamarIA("tecnico", await comprimirImagen(actual.render, 1024, 0.9), actual.espec);
+    if (!salida) return;
     const id = actual.id;
-    setResultados((rs) => rs.map((r) => (r.id === id ? { ...r, tecnico } : r)));
+    setResultados((rs) => rs.map((r) => (r.id === id ? { ...r, tecnico: salida.imagen } : r)));
     setVista("tecnico");
   }
 
@@ -161,8 +190,8 @@ export default function Estudio() {
       const existente = actual.piezaId ? await obtenerPieza(actual.piezaId) : undefined;
       const pieza = existente ?? nuevaPieza(actual.espec, nombrePieza(actual.espec));
       pieza.boceto = await comprimirImagen(actual.boceto, 768);
-      if (actual.render) pieza.render = await comprimirImagen(actual.render, 1024);
-      if (actual.tecnico) pieza.tecnico = await comprimirImagen(actual.tecnico, 1024);
+      if (actual.render) pieza.render = await comprimirImagen(actual.render, 2048, 0.9);
+      if (actual.tecnico) pieza.tecnico = await comprimirImagen(actual.tecnico, 1600, 0.9);
       await guardarPieza(pieza);
       setResultados((rs) => rs.map((r) => (r.id === actual.id ? { ...r, piezaId: pieza.id } : r)));
       setAviso({ texto: existente ? "Pieza actualizada en tu colección." : "Pieza guardada en tu colección.", enlace: `/propuesta/${pieza.id}` });
@@ -190,7 +219,7 @@ export default function Estudio() {
         </div>
         {estadoIA && (
           <span className={`rounded-full border px-3 py-1 text-xs ${sinIA ? "border-amber-300 bg-amber-50 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
-            {sinIA ? "Modo demostración" : `IA activa · ${estadoIA.proveedor === "openai" ? "OpenAI" : "Google Gemini"}`}
+            {sinIA ? "Modo demostración" : `IA activa · ${estadoIA.proveedores.length > 1 ? "2 motores" : MOTORES.find((m) => m.id === estadoIA.proveedor)?.nombre}`}
           </span>
         )}
       </div>
@@ -220,6 +249,10 @@ export default function Estudio() {
               <Selector etiqueta="Piedra principal" valor={espec.piedra} opciones={PIEDRAS} onChange={(v) => cambiar("piedra", v)} />
               <Selector etiqueta="Talla" valor={espec.talla} opciones={TALLAS} onChange={(v) => cambiar("talla", v)} />
               <Selector etiqueta="Estilo" valor={espec.estilo} opciones={ESTILOS} onChange={(v) => cambiar("estilo", v)} />
+              {!sinIA && <Selector etiqueta="Calidad del render" valor={calidad} opciones={CALIDADES} onChange={(v) => setCalidad(v as Calidad)} />}
+              {estadoIA && estadoIA.proveedores.length > 1 && motor && (
+                <Selector etiqueta="Motor de IA" valor={motor} opciones={MOTORES} onChange={(v) => setMotor(v as Proveedor)} />
+              )}
               {estadoIA?.requiereCodigo && (
                 <label className="block">
                   <span className="etiqueta flex items-center gap-1">
@@ -278,11 +311,14 @@ export default function Estudio() {
                   </p>
                 </div>
               )}
+              {imagenVista && vista === "render" && actual?.motor && (
+                <span className="absolute right-3 bottom-3 rounded-full bg-white/85 px-2.5 py-1 text-[0.7rem] text-tinta-2 backdrop-blur">{actual.motor}</span>
+              )}
               {generando && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-marfil/85 backdrop-blur-sm" aria-live="polite">
                   <Gem size={34} className="animate-brillo text-oro" />
                   <p className="font-display text-xl">{MENSAJES[Math.floor(segundos / 4) % MENSAJES.length]}</p>
-                  <p className="text-xs text-humo tabular-nums">{segundos} s · suele tardar entre 15 y 60 s</p>
+                  <p className="text-xs text-humo tabular-nums">{segundos} s · {calidad === "maxima" ? "a 2K suele tardar entre 30 y 90 s" : "suele tardar entre 15 y 40 s"}</p>
                 </div>
               )}
             </div>

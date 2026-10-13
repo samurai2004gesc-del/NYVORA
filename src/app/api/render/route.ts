@@ -1,9 +1,9 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { ErrorIA, generarImagen, proveedorConfigurado } from "@/lib/ia";
+import { ErrorIA, generarImagen, proveedorConfigurado, proveedoresDisponibles, type Calidad, type Proveedor } from "@/lib/ia";
 import { construirPrompt, esEspecValida, type ModoRender } from "@/lib/prompts";
 
-// La generación de imágenes puede tardar más de un minuto.
-export const maxDuration = 120;
+// Un render a 2K puede tardar más de un minuto, y si un modelo no está disponible se prueba el siguiente.
+export const maxDuration = 300;
 
 const MAX_IMAGEN_BYTES = 3_000_000;
 
@@ -15,10 +15,11 @@ function codigoValido(req: Request): boolean {
   return timingSafeEqual(h(recibido), h(esperado));
 }
 
-/** Estado del estudio: qué IA está configurada y si hace falta código de acceso. */
+/** Estado del estudio: qué motores de IA hay, cuál va por defecto y si hace falta código de acceso. */
 export function GET() {
   return Response.json({
     proveedor: proveedorConfigurado(),
+    proveedores: proveedoresDisponibles(),
     requiereCodigo: Boolean(process.env.NYVORA_ACCESS_CODE),
   });
 }
@@ -28,20 +29,24 @@ export async function POST(req: Request) {
     return Response.json({ error: "Código de acceso incorrecto.", code: "acceso" }, { status: 401 });
   }
 
-  const proveedor = proveedorConfigurado();
-  if (!proveedor) {
+  if (!proveedorConfigurado()) {
     return Response.json(
       { error: "Falta configurar OPENAI_API_KEY o GEMINI_API_KEY en Vercel.", code: "demo" },
       { status: 503 },
     );
   }
 
-  let cuerpo: { imagen?: unknown; modo?: unknown; espec?: unknown };
+  let cuerpo: { imagen?: unknown; modo?: unknown; espec?: unknown; proveedor?: unknown; calidad?: unknown };
   try {
     cuerpo = await req.json();
   } catch {
     return Response.json({ error: "Cuerpo JSON inválido." }, { status: 400 });
   }
+
+  // El estudio puede pedir un motor concreto; si no está configurado, se usa el de por defecto.
+  const pedido = cuerpo.proveedor as Proveedor;
+  const proveedor = proveedoresDisponibles().includes(pedido) ? pedido : proveedorConfigurado()!;
+  const calidad: Calidad = cuerpo.calidad === "estandar" ? "estandar" : "maxima";
 
   const modo: ModoRender = cuerpo.modo === "tecnico" ? "tecnico" : "render";
   if (!esEspecValida(cuerpo.espec)) {
@@ -56,8 +61,8 @@ export async function POST(req: Request) {
   }
 
   try {
-    const salida = await generarImagen(proveedor, construirPrompt(modo, espec), { mime: m[1], base64: m[2] });
-    return Response.json({ imagen: salida.dataUrl, proveedor: salida.proveedor, modelo: salida.modelo, modo });
+    const salida = await generarImagen(proveedor, construirPrompt(modo, espec), { mime: m[1], base64: m[2] }, calidad);
+    return Response.json({ imagen: salida.dataUrl, proveedor: salida.proveedor, modelo: salida.modelo, lado: salida.lado, modo });
   } catch (e) {
     console.error("[nyvora/render]", e);
     if (e instanceof ErrorIA) return Response.json({ error: e.message }, { status: e.status });

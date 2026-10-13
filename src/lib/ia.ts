@@ -1,6 +1,9 @@
 // Proveedores de IA de imagen. Solo se usa en el servidor (la clave nunca llega al navegador).
 
+import sharp from "sharp";
+
 export type Proveedor = "openai" | "gemini";
+export type Calidad = "estandar" | "maxima";
 
 export interface ImagenEntrada {
   mime: string;
@@ -11,29 +14,73 @@ export interface ImagenSalida {
   dataUrl: string;
   proveedor: Proveedor;
   modelo: string;
+  /** Lado de la imagen generada, en píxeles. */
+  lado: number;
 }
+
+/** «modelo»: la cuenta no tiene ese modelo; «tamano»: el modelo no acepta esa resolución. */
+type Recuperable = "modelo" | "tamano" | null;
 
 export class ErrorIA extends Error {
   readonly status: number;
-  constructor(message: string, status = 502) {
+  readonly recuperable: Recuperable;
+  constructor(message: string, status = 502, recuperable: Recuperable = null) {
     super(message);
     this.status = status;
+    this.recuperable = recuperable;
   }
 }
 
+// Del mejor al más antiguo. Si la cuenta no tiene acceso a uno, se prueba el siguiente.
+const MODELOS_OPENAI = ["gpt-image-2", "gpt-image-1.5", "gpt-image-1"];
+const MODELOS_GEMINI = ["gemini-3-pro-image", "gemini-3.1-flash-image", "gemini-2.5-flash-image"];
+
 const claveGemini = () => process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || "";
 
-export function proveedorConfigurado(): Proveedor | null {
-  const elegido = process.env.NYVORA_IMAGE_PROVIDER?.toLowerCase();
-  if (elegido === "openai" && process.env.OPENAI_API_KEY) return "openai";
-  if (elegido === "gemini" && claveGemini()) return "gemini";
-  if (process.env.OPENAI_API_KEY) return "openai";
-  if (claveGemini()) return "gemini";
-  return null;
+export function proveedoresDisponibles(): Proveedor[] {
+  const lista: Proveedor[] = [];
+  if (claveGemini()) lista.push("gemini");
+  if (process.env.OPENAI_API_KEY) lista.push("openai");
+  return lista;
 }
 
-export async function generarImagen(proveedor: Proveedor, prompt: string, img: ImagenEntrada): Promise<ImagenSalida> {
-  return proveedor === "openai" ? conOpenAI(prompt, img) : conGemini(prompt, img);
+/** Con las dos claves, Gemini (Nano Banana Pro) va primero: es el más fiel en fotorrealismo. */
+export function proveedorConfigurado(): Proveedor | null {
+  const disponibles = proveedoresDisponibles();
+  const elegido = process.env.NYVORA_IMAGE_PROVIDER?.toLowerCase();
+  if (disponibles.includes(elegido as Proveedor)) return elegido as Proveedor;
+  return disponibles[0] ?? null;
+}
+
+const candidatos = (variable: string, lista: string[]) => {
+  const propio = process.env[variable];
+  return propio ? [propio, ...lista.filter((m) => m !== propio)] : lista;
+};
+
+export async function generarImagen(proveedor: Proveedor, prompt: string, img: ImagenEntrada, calidad: Calidad = "maxima"): Promise<ImagenSalida> {
+  // Cada modelo se intenta con la mejor resolución y, si no la acepta, con la siguiente.
+  const intentos =
+    proveedor === "openai"
+      ? candidatos("OPENAI_IMAGE_MODEL", MODELOS_OPENAI).map((modelo) =>
+          (calidad === "maxima" ? [2048, 1024] : [1024]).map((lado) => () => conOpenAI(modelo, lado, calidad, prompt, img)),
+        )
+      : candidatos("GEMINI_IMAGE_MODEL", MODELOS_GEMINI).map((modelo) =>
+          (modelo.startsWith("gemini-3") ? [calidad === "maxima" ? "2K" : "1K", null] : [null]).map((tam) => () => conGemini(modelo, tam, prompt, img)),
+        );
+
+  let primero: ErrorIA | null = null;
+  for (const tamanos of intentos) {
+    for (const intento of tamanos) {
+      try {
+        return await intento();
+      } catch (e) {
+        if (!(e instanceof ErrorIA) || !e.recuperable) throw e;
+        primero ??= e;
+        if (e.recuperable === "modelo") break;
+      }
+    }
+  }
+  throw primero ?? new ErrorIA("No hay modelos de imagen disponibles.");
 }
 
 async function leerError(r: Response): Promise<string> {
@@ -45,49 +92,94 @@ async function leerError(r: Response): Promise<string> {
   }
 }
 
-async function conOpenAI(prompt: string, img: ImagenEntrada): Promise<ImagenSalida> {
-  const modelo = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
-  const extension = img.mime === "image/jpeg" ? "jpg" : "png";
+/** Decide si vale la pena reintentar: con otra resolución, o directamente con otro modelo. */
+function clasificar(status: number, mensaje: string): Recuperable {
+  if (status !== 400 && status !== 404) return null;
+  if (/safety|policy|moderation/i.test(mensaje)) return null;
+  if (status === 400 && /size|resolution|image_?config|image_?size/i.test(mensaje)) return "tamano";
+  if (status === 404 || /model/i.test(mensaje)) return "modelo";
+  return null;
+}
+
+/**
+ * Pasa la imagen a JPEG de alta calidad. Una PNG de 2K pesa varios MB y Vercel corta las
+ * respuestas de más de 4.5 MB; en JPEG al 92 % el detalle se conserva y ocupa una fracción.
+ */
+async function aJpeg(base64: string, mime: string): Promise<{ dataUrl: string; lado: number }> {
+  try {
+    const { data, info } = await sharp(Buffer.from(base64, "base64"))
+      .resize({ width: 2048, height: 2048, fit: "inside", withoutEnlargement: true })
+      .flatten({ background: "#ffffff" })
+      .jpeg({ quality: 92, mozjpeg: true })
+      .toBuffer({ resolveWithObject: true });
+    return { dataUrl: `data:image/jpeg;base64,${data.toString("base64")}`, lado: Math.max(info.width, info.height) };
+  } catch {
+    return { dataUrl: `data:${mime};base64,${base64}`, lado: 0 };
+  }
+}
+
+async function conOpenAI(modelo: string, lado: number, calidad: Calidad, prompt: string, img: ImagenEntrada): Promise<ImagenSalida> {
+  const extension = img.mime === "image/jpeg" ? "jpg" : img.mime === "image/webp" ? "webp" : "png";
   const form = new FormData();
   form.append("model", modelo);
   form.append("prompt", prompt);
   form.append("image", new Blob([Buffer.from(img.base64, "base64")], { type: img.mime }), `boceto.${extension}`);
-  form.append("size", "1024x1024");
-  form.append("quality", process.env.OPENAI_IMAGE_QUALITY || "medium");
-  // JPEG mantiene la respuesta muy por debajo del límite de 4.5 MB de Vercel.
-  form.append("output_format", "jpeg");
+  form.append("size", `${lado}x${lado}`);
+  form.append("quality", calidad === "maxima" ? "high" : "medium");
+  form.append("output_format", "png");
 
   const r = await fetch("https://api.openai.com/v1/images/edits", {
     method: "POST",
     headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
     body: form,
   });
-  if (!r.ok) throw new ErrorIA(`OpenAI: ${await leerError(r)}`, r.status === 429 ? 429 : 502);
+  if (!r.ok) {
+    const mensaje = await leerError(r);
+    throw new ErrorIA(`OpenAI (${modelo}): ${mensaje}`, r.status === 429 ? 429 : 502, clasificar(r.status, mensaje));
+  }
   const j = await r.json();
   const b64: string | undefined = j?.data?.[0]?.b64_json;
   if (!b64) throw new ErrorIA("OpenAI no devolvió ninguna imagen.");
-  return { dataUrl: `data:image/jpeg;base64,${b64}`, proveedor: "openai", modelo };
+  return { ...(await aJpeg(b64, "image/png")), proveedor: "openai", modelo };
 }
 
-async function conGemini(prompt: string, img: ImagenEntrada): Promise<ImagenSalida> {
-  const modelo = process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
+interface DatosGemini {
+  data?: string;
+  mimeType?: string;
+  mime_type?: string;
+}
+interface ParteGemini {
+  thought?: boolean;
+  inlineData?: DatosGemini;
+  inline_data?: DatosGemini;
+}
+
+async function conGemini(modelo: string, tam: string | null, prompt: string, img: ImagenEntrada): Promise<ImagenSalida> {
   const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": claveGemini() },
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }, { inline_data: { mime_type: img.mime, data: img.base64 } }] }],
-      generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
+      generationConfig: {
+        responseModalities: ["IMAGE", "TEXT"],
+        ...(tam ? { imageConfig: { aspectRatio: "1:1", imageSize: tam } } : {}),
+      },
     }),
   });
-  if (!r.ok) throw new ErrorIA(`Gemini: ${await leerError(r)}`, r.status === 429 ? 429 : 502);
+  if (!r.ok) {
+    const mensaje = await leerError(r);
+    throw new ErrorIA(`Gemini (${modelo}): ${mensaje}`, r.status === 429 ? 429 : 502, clasificar(r.status, mensaje));
+  }
   const j = await r.json();
-  const partes: Record<string, { data?: string; mimeType?: string; mime_type?: string }>[] = j?.candidates?.[0]?.content?.parts ?? [];
-  for (const p of partes) {
-    const datos = p.inlineData ?? p.inline_data;
-    if (datos?.data) {
-      const mime = datos.mimeType ?? datos.mime_type ?? "image/png";
-      return { dataUrl: `data:${mime};base64,${datos.data}`, proveedor: "gemini", modelo };
-    }
+  const partes: ParteGemini[] = j?.candidates?.[0]?.content?.parts ?? [];
+  // Los modelos Gemini 3 pueden devolver antes imágenes intermedias de «razonamiento»: la buena es la última.
+  const imagenes = partes
+    .filter((p) => !p.thought)
+    .map((p) => p.inlineData ?? p.inline_data)
+    .filter((d) => d?.data);
+  const final = imagenes[imagenes.length - 1];
+  if (final?.data) {
+    return { ...(await aJpeg(final.data, final.mimeType ?? final.mime_type ?? "image/png")), proveedor: "gemini", modelo };
   }
   const motivo = j?.candidates?.[0]?.finishReason ?? j?.promptFeedback?.blockReason;
   throw new ErrorIA(`Gemini no devolvió ninguna imagen${motivo ? ` (${motivo})` : ""}.`);

@@ -80,7 +80,7 @@ export default function Coleccion() {
                   </Link>
                   <p className="text-sm text-humo">{metalPorId(p.cotizacion?.datos.metalId ?? p.espec.metalId).nombre}</p>
                   <div className="mt-4 flex items-center justify-between gap-3">
-                    <span className="titulo-display text-xl">
+                    <span className="cifra text-xl">
                       {p.cotizacion ? formatoMoneda(p.cotizacion.resultado.precio, p.cotizacion.datos.moneda) : <span className="font-sans text-sm text-humo">Sin cotizar</span>}
                     </span>
                     <div className="flex gap-1">

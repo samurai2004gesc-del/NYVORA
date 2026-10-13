@@ -340,14 +340,14 @@ function Cotizador() {
             <div className="grid grid-cols-2 gap-2.5">
               {tarjetas.map((x) => (
                 <div key={x.t} className="rounded-xl border border-linea p-3">
-                  <p className="etiqueta text-[0.6rem]">{x.t}</p>
-                  <p className="titulo-display mt-1 text-xl tabular-nums">{m(x.v)}</p>
+                  <p className="etiqueta text-[0.6rem] tracking-[0.1em] whitespace-nowrap">{x.t}</p>
+                  <p className="cifra mt-1 text-xl">{m(x.v)}</p>
                 </div>
               ))}
             </div>
             <div className="mt-3 rounded-xl bg-noche p-4 text-white">
               <p className="etiqueta text-oro-claro">Precio de venta · {datos.moneda}</p>
-              <p className="titulo-display mt-1 text-4xl tabular-nums">{m(r.precio)}</p>
+              <p className="cifra mt-1 text-4xl">{m(r.precio)}</p>
               {r.impuesto > 0 && <p className="mt-1 text-sm text-white/70 tabular-nums">Con IVA: {m(r.total)}</p>}
             </div>
             <dl className="mt-4 space-y-1.5 text-sm">

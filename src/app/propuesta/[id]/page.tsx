@@ -187,7 +187,7 @@ export default function Propuesta() {
             {cot && r && (
               <div className="mt-6 rounded-2xl bg-noche p-6 text-white print:border print:border-linea print:bg-white print:text-tinta">
                 <p className="etiqueta text-oro-claro print:text-oro-oscuro">Inversión</p>
-                <p className="titulo-display mt-1 text-4xl">{formatoMoneda(r.impuesto > 0 ? r.total : r.precio, moneda)}</p>
+                <p className="cifra mt-1 text-4xl">{formatoMoneda(r.impuesto > 0 ? r.total : r.precio, moneda)}</p>
                 <p className="mt-1 text-sm text-white/65 print:text-humo">Precio en {moneda} · {r.impuesto > 0 ? `IVA (${cot.datos.impuestoPct}%) incluido` : "impuestos no incluidos"}</p>
                 {desglose && (
                   <dl className="mt-4 space-y-1.5 border-t border-white/15 pt-4 text-sm print:border-linea">

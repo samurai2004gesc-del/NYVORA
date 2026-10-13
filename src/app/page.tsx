@@ -34,7 +34,7 @@ const PREGUNTAS = [
   },
   {
     p: "¿Qué inteligencia artificial usa?",
-    r: "NYVORA funciona con los modelos de imagen de OpenAI o de Google Gemini, según la clave que configures. Tu clave queda en el servidor de Vercel y nunca llega al navegador.",
+    r: "NYVORA usa los modelos de imagen más avanzados: Nano Banana Pro de Google y GPT Image 2 de OpenAI, con renders a 2K. Tu clave queda en el servidor y nunca llega al navegador.",
   },
 ];
 
@@ -51,13 +51,13 @@ function MiniCotizacion() {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {tarjetas.map((x) => (
           <div key={x.t} className="rounded-xl border border-linea p-3 text-center">
-            <p className="etiqueta text-[0.6rem]">{x.t}</p>
-            <p className="titulo-display mt-1 text-xl">{formatoMoneda(x.v, "USD")}</p>
+            <p className="etiqueta text-[0.6rem] tracking-[0.1em] whitespace-nowrap">{x.t}</p>
+            <p className="cifra mt-1 text-xl">{formatoMoneda(x.v, "USD")}</p>
           </div>
         ))}
         <div className="rounded-xl bg-noche p-3 text-center text-white">
-          <p className="etiqueta text-[0.6rem] text-oro-claro">Precio final</p>
-          <p className="titulo-display mt-1 text-xl">{formatoMoneda(r.precio, "USD")}</p>
+          <p className="etiqueta text-[0.6rem] tracking-[0.1em] whitespace-nowrap text-oro-claro">Precio final</p>
+          <p className="cifra mt-1 text-xl">{formatoMoneda(r.precio, "USD")}</p>
         </div>
       </div>
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -119,7 +119,7 @@ function PropuestaMuestra() {
           <div className="mt-auto flex flex-wrap items-end justify-between gap-3 pt-6">
             <div>
               <p className="etiqueta text-[0.6rem]">Inversión</p>
-              <p className="titulo-display text-2xl">{formatoMoneda(calcularCotizacion(cotizacionInicial("USD")).precio, "USD")}</p>
+              <p className="cifra text-2xl">{formatoMoneda(calcularCotizacion(cotizacionInicial("USD")).precio, "USD")}</p>
             </div>
             <span className="btn btn-primario btn-chico">Aprobar diseño</span>
           </div>
